@@ -1,4 +1,4 @@
-package it.polimi.genomics.spark.implementation
+package it.polimi.genomics.dieutth
 
 /**
   * Created by Abdulrahman Kaitoua on 27/05/15.
@@ -14,37 +14,35 @@ import it.polimi.genomics.core.DataStructures.GroupMDParameters.TopParameter
 import it.polimi.genomics.core.DataStructures.MetaAggregate.{MetaAggregateFunction, MetaExtension}
 import it.polimi.genomics.core.DataStructures.MetaGroupByCondition.MetaGroupByCondition
 import it.polimi.genomics.core.DataStructures.MetaJoinCondition.MetaJoinCondition
-import it.polimi.genomics.core.DataStructures.RegionAggregate.{RegionExtension, RegionsToMeta}
-import it.polimi.genomics.core.DataStructures.RegionCondition.RegionCondition
+import it.polimi.genomics.core.DataStructures.RegionAggregate.RegionsToMeta
 import it.polimi.genomics.core.DataStructures._
 import it.polimi.genomics.core.DataTypes._
 import it.polimi.genomics.core.ParsingType._
 import it.polimi.genomics.core._
 import it.polimi.genomics.core.exception.SelectFormatException
-import it.polimi.genomics.profiling.Profilers.Profiler
-import it.polimi.genomics.spark.implementation.MetaOperators.GroupOperator.{MetaGroupMGD, MetaJoinMJD2}
-import it.polimi.genomics.spark.implementation.MetaOperators.SelectMeta._
-import it.polimi.genomics.spark.implementation.MetaOperators._
-import it.polimi.genomics.spark.implementation.RegionsOperators.GenometricCover.GenometricCover
-import it.polimi.genomics.spark.implementation.RegionsOperators.GenometricMap._
-import it.polimi.genomics.spark.implementation.RegionsOperators.SelectRegions.{ReadMEMRD, StoreGTFRD, StoreTABRD, TestingReadRD}
-import it.polimi.genomics.spark.implementation.RegionsOperators._
-import it.polimi.genomics.spark.implementation.loaders._
+import it.polimi.genomics.dieutth.MetaOperators.GroupOperator._
+import it.polimi.genomics.dieutth.MetaOperators.SelectMeta._
+import it.polimi.genomics.dieutth.MetaOperators._
+import it.polimi.genomics.dieutth.RegionsOperators.GenometricMap._
+import it.polimi.genomics.dieutth.RegionsOperators.MapWithCustomPartitioner.CustomMap
+import it.polimi.genomics.dieutth.RegionsOperators.SelectRegions._
+import it.polimi.genomics.dieutth.RegionsOperators._
+import it.polimi.genomics.dieutth.loaders._
+import it.polimi.genomics.spark.implementation.RegionsOperators.GenometricMap.GenometricMap71
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import org.slf4j.LoggerFactory
 
-object GMQLSparkExecutor{
+object GMQLSparkDieuExecutor{
   type GMQL_DATASET = (Array[(GRecordKey, Array[GValue])], Array[(Long, (String, String))], List[(String, PARSING_TYPE)])
-
 }
-class GMQLSparkExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : Int = 100000, REF_PARALLILISM: Int = 20,
-                        testingIOFormats:Boolean = false, sc:SparkContext,
-                        outputFormat:GMQLSchemaFormat.Value = GMQLSchemaFormat.TAB,
-                        outputCoordinateSystem: GMQLSchemaCoordinateSystem.Value = GMQLSchemaCoordinateSystem.Default,
-                        stopContext:Boolean = true)
+class GMQLSparkDieuExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : Int = 100000, REF_PARALLILISM: Int = 20,
+                            sc:SparkContext,
+                            outputFormat:GMQLSchemaFormat.Value = GMQLSchemaFormat.TAB,
+                            outputCoordinateSystem: GMQLSchemaCoordinateSystem.Value = GMQLSchemaCoordinateSystem.Default,
+                            stopContext:Boolean = true)
   extends Implementation with java.io.Serializable{
 
 
@@ -88,19 +86,19 @@ class GMQLSparkExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : 
     val path = ""
 
     name.toLowerCase() match {
-      case "bedscoreparser" => BedScoreParser
-      case "annparser" => ANNParser
-      case "broadpeaksparser" => BroadPeaksParser
-      case "broadpeaks" => BroadPeaksParser
-      case "narrowpeakparser" => NarrowPeakParser
-      case "testorderparser" =>testOrder
-      case "narrowpeak" => NarrowPeakParser
-      case "narrow" => NarrowPeakParser
-      case "bedtabseparatedparser" => BedParser
-      case "rnaseqparser" => RnaSeqParser
-      case "customparser" => (new CustomParser).setSchema(dataset)
-      case "broadprojparser" => BroadProjParser
-      case "basicparser" => BasicParser
+//      case "bedscoreparser" => BedScoreParser
+//      case "annparser" => ANNParser
+//      case "broadpeaksparser" => BroadPeaksParser
+//      case "broadpeaks" => BroadPeaksParser
+//      case "narrowpeakparser" => NarrowPeakParser
+//      case "testorderparser" =>testOrder
+//      case "narrowpeak" => NarrowPeakParser
+//      case "narrow" => NarrowPeakParser
+//      case "bedtabseparatedparser" => BedParser
+//      case "rnaseqparser" => RnaSeqParser
+//      case "customparser" => (new CustomParser).setSchema(dataset)
+//      case "broadprojparser" => BroadProjParser
+//      case "basicparser" => BasicParser
       case "default" =>  (new CustomParser).setSchema(dataset)
       case _ => {logger.warn("unable to find " + name + " parser, try the default one"); getParser("default",dataset)}
     }
@@ -130,38 +128,8 @@ class GMQLSparkExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : 
         val conf = new Configuration();
         val path = new org.apache.hadoop.fs.Path(RegionOutputPath);
         fs = FileSystem.get(path.toUri(), conf);
-
-        if(testingIOFormats){
-          metaRDD.map(x=>x._1+","+x._2._1 + "," + x._2._2).saveAsTextFile(MetaOutputPath)
-          regionRDD.map(x=>x._1+"\t"+x._2.mkString("\t")).saveAsTextFile(RegionOutputPath)
-        }
-
-
         // store schema
         storeSchema(GMQLSchema.generateSchemaXML(variable.schema,outputFolderName,outputFormat, outputCoordinateSystem),variableDir)
-
-        // Compute Profile and store into xml files (one for web, one for optimization)
-//        val profile = Profiler.profile(regions = regionRDD, meta = metaRDD, sc = sc)
-
-//        try {
-//          val output = fs.create(new Path(variableDir + "/exp/" + "profile.xml"));
-//          val output_web = fs.create(new Path(variableDir + "/exp/" + "web_profile.xml"));
-//
-//          val os = new java.io.BufferedOutputStream(output)
-//          val os_web = new java.io.BufferedOutputStream(output_web)
-//
-//          os.write(Profiler.profileToOptXML(profile).toString().getBytes("UTF-8"))
-//          os_web.write(Profiler.profileToWebXML(profile).toString().getBytes("UTF-8"))
-//
-//          os.close()
-//          os_web.close()
-//        } catch {
-//          case e: Throwable => {
-//            logger.error(e.getMessage)
-//            e.printStackTrace()
-//          }
-//        }
-
       }
     } catch {
       case e : SelectFormatException => {
@@ -193,7 +161,7 @@ class GMQLSparkExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : 
       val res: RDD[(Long, (String, String))] =
         mo match {
           case IRStoreMD(path, value,_) => StoreMD(this, path, value, sc)
-          case IRReadMD(path, loader,_) => if (testingIOFormats)  TestingReadMD(path,loader,sc) else ReadMD(path, loader, sc)
+          case IRReadMD(path, loader,_) => ReadMD(path, loader, sc) //if (testingIOFormats)  TestingReadMD(path,loader,sc) else
           case IRReadMEMMD(metaRDD) => ReadMEMMD(metaRDD)
           case IRSelectMD(metaCondition, inputDataset) => SelectMD(this, metaCondition, inputDataset, sc)
           case IRPurgeMD(regionDataset, inputDataset) => inputDataset match{
@@ -229,28 +197,31 @@ class GMQLSparkExecutor(val binSize : BinSize = BinSize(), val maxBinDistance : 
     } else {
       val res =
         ro match {
-          case IRStoreRD(path, value,meta,schema,_) => if(outputFormat == GMQLSchemaFormat.GTF) StoreGTFRD(this, path, value,meta,schema,outputCoordinateSystem,sc) else if(outputFormat == GMQLSchemaFormat.TAB) StoreTABRD(this,path, value,meta,schema,outputCoordinateSystem,sc) else StoreRD(this, path, value, sc)
-          case IRReadRD(path, loader,_) => if (testingIOFormats) TestingReadRD(path, loader, sc) else ReadRD(path, loader, sc)
+            //to be implemented
+          case IRStoreRD(path, value,meta,schema,_) => if(outputFormat == GMQLSchemaFormat.TAB) StoreTABRD(this,path, value,meta,schema,outputCoordinateSystem,sc) else StoreRD(this, path, value, sc)
+          case IRReadRD(path, loader,_) => ReadRD(path, loader, sc)
           case IRReadMEMRD(metaRDD) => ReadMEMRD(metaRDD)
-          case IRSelectRD(regionCondition: Option[RegionCondition], filteredMeta: Option[MetaOperator], inputDataset: RegionOperator) =>
-            inputDataset match {
-              case IRReadRD(path, loader,_) =>
-                if(filteredMeta.isDefined) {
-                  SelectIRD(this, regionCondition, filteredMeta, loader,path,None, sc)
-                }
-                else SelectRD(this, regionCondition, filteredMeta, inputDataset, sc)
-              case _ => SelectRD(this, regionCondition, filteredMeta, inputDataset, sc)
-            }
+//          case IRSelectRD(regionCondition: Option[RegionCondition], filteredMeta: Option[MetaOperator], inputDataset: RegionOperator) =>
+//            inputDataset match {
+//              case IRReadRD(path, loader,_) =>
+//                if(filteredMeta.isDefined) {
+//                  SelectIRD(this, regionCondition, filteredMeta, loader,path,None, sc)
+//                }
+//                else SelectRD(this, regionCondition, filteredMeta, inputDataset, sc)
+//              case _ => SelectRD(this, regionCondition, filteredMeta, inputDataset, sc)
+//            }
           case IRPurgeRD(metaDataset: MetaOperator, inputDataset: RegionOperator) => PurgeRD(this, metaDataset, inputDataset, sc)
-          case irCover:IRRegionCover => GenometricCover(this, irCover.cover_flag, irCover.min, irCover.max, irCover.aggregates, irCover.groups, irCover.input_dataset,2000/*irCover.binSize.getOrElse(defaultBinSize)*/, sc)
-          case IRUnionRD(schemaReformatting: List[Int], leftDataset: RegionOperator, rightDataset: RegionOperator) => UnionRD(this, schemaReformatting, leftDataset, rightDataset, sc)
-          case IRMergeRD(dataset: RegionOperator, groups: Option[MetaGroupOperator]) => MergeRD(this, dataset, groups, sc)
-          case IRGroupRD(groupingParameters: Option[List[GroupRDParameters.GroupingParameter]], aggregates: Option[List[RegionAggregate.RegionsToRegion]], regionDataset: RegionOperator) => GroupRD(this, groupingParameters, aggregates, regionDataset, sc)
-          case IROrderRD(ordering: List[(Int, Direction)], topPar: TopParameter, inputDataset: RegionOperator) => OrderRD(this, ordering: List[(Int, Direction)], topPar, inputDataset, sc)
-          case irJoin:IRGenometricJoin => GenometricJoin4TopMin3(this, irJoin.metajoin_condition, irJoin.join_condition, irJoin.region_builder, irJoin.left_dataset, irJoin.right_dataset,irJoin.join_on_attributes,50000/*irJoin.binSize.getOrElse(defaultBinSize)*/,/*irJoin.binSize.getOrElse(defaultBinSize)**/maxBinDistance, sc)
-          case irMap:IRGenometricMap => GenometricMap71(this, irMap.grouping, irMap.aggregates, irMap.reference, irMap.samples,50000/*irMap.binSize.getOrElse(defaultBinSize)*/,REF_PARALLILISM, sc)
-          case IRDifferenceRD(metaJoin: OptionalMetaJoinOperator, leftDataset: RegionOperator, rightDataset: RegionOperator,exact:Boolean) => GenometricDifference(this, metaJoin, leftDataset, rightDataset,exact, sc)
-          case IRProjectRD(projectedValues: Option[List[Int]], tupleAggregator: Option[List[RegionExtension]], inputDataset: RegionOperator, inputDatasetMeta: MetaOperator) => ProjectRD(this, projectedValues, tupleAggregator, inputDataset,inputDatasetMeta, sc)
+//          case irCover:IRRegionCover => GenometricCover(this, irCover.cover_flag, irCover.min, irCover.max, irCover.aggregates, irCover.groups, irCover.input_dataset,2000/*irCover.binSize.getOrElse(defaultBinSize)*/, sc)
+//          case IRUnionRD(schemaReformatting: List[Int], leftDataset: RegionOperator, rightDataset: RegionOperator) => UnionRD(this, schemaReformatting, leftDataset, rightDataset, sc)
+//          case IRMergeRD(dataset: RegionOperator, groups: Option[MetaGroupOperator]) => MergeRD(this, dataset, groups, sc)
+//          case IRGroupRD(groupingParameters: Option[List[GroupRDParameters.GroupingParameter]], aggregates: Option[List[RegionAggregate.RegionsToRegion]], regionDataset: RegionOperator) => GroupRD(this, groupingParameters, aggregates, regionDataset, sc)
+//          case IROrderRD(ordering: List[(Int, Direction)], topPar: TopParameter, inputDataset: RegionOperator) => OrderRD(this, ordering: List[(Int, Direction)], topPar, inputDataset, sc)
+//          case irJoin:IRGenometricJoin => GenometricJoin4TopMin3(this, irJoin.metajoin_condition, irJoin.join_condition, irJoin.region_builder, irJoin.left_dataset, irJoin.right_dataset,irJoin.join_on_attributes,50000/*irJoin.binSize.getOrElse(defaultBinSize)*/,/*irJoin.binSize.getOrElse(defaultBinSize)**/maxBinDistance, sc)
+//          case irMap:IRGenometricMap => GenometricMap71(this, irMap.grouping, irMap.aggregates, irMap.reference, irMap.samples,50000/*irMap.binSize.getOrElse(defaultBinSize)*/,REF_PARALLILISM, sc)
+//          case irMap:IRGenometricMap => CustomMap(this, irMap.grouping, irMap.aggregates, irMap.reference, irMap.samples,50000/*irMap.binSize.getOrElse(defaultBinSize)*/,REF_PARALLILISM, sc)
+          case irMap:IRGenometricMap => GenometricMap71(this, irMap.grouping, irMap.aggregates, irMap.reference, irMap.samples,binSize.Map,REF_PARALLILISM, sc)
+//          case IRDifferenceRD(metaJoin: OptionalMetaJoinOperator, leftDataset: RegionOperator, rightDataset: RegionOperator,exact:Boolean) => GenometricDifference(this, metaJoin, leftDataset, rightDataset,exact, sc)
+//          case IRProjectRD(projectedValues: Option[List[Int]], tupleAggregator: Option[List[RegionExtension]], inputDataset: RegionOperator, inputDatasetMeta: MetaOperator) => ProjectRD(this, projectedValues, tupleAggregator, inputDataset,inputDatasetMeta, sc)
 
         }
       ro.intermediateResult = Some(res)

@@ -5,8 +5,9 @@ import it.polimi.genomics.core.DataStructures._
 import it.polimi.genomics.core.DataTypes._
 import it.polimi.genomics.core.exception.SelectFormatException
 import it.polimi.genomics.core.{GDouble, GNull, GRecordKey, GValue}
-import it.polimi.genomics.spark.implementation.GMQLSparkExecutor
-import org.apache.spark.SparkContext
+import it.polimi.genomics.dieutth.GMQLSparkDieuExecutor
+import it.polimi.genomics.dieutth.RegionsOperators.MapWithCustomPartitioner.CustomPartitioner
+import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 import org.slf4j.LoggerFactory
@@ -25,7 +26,7 @@ object GenometricMap71 {
   private final type groupType = Array[((Long, String), Array[Long])]
 
   @throws[SelectFormatException]
-  def apply(executor: GMQLSparkExecutor, grouping: OptionalMetaJoinOperator, aggregator: List[RegionAggregate.RegionsToRegion], reference: RegionOperator, experiments: RegionOperator, BINNING_PARAMETER: Long, REF_PARALLILISM: Int, sc: SparkContext): RDD[GRECORD] = {
+  def apply(executor: GMQLSparkDieuExecutor, grouping: OptionalMetaJoinOperator, aggregator: List[RegionAggregate.RegionsToRegion], reference: RegionOperator, experiments: RegionOperator, BINNING_PARAMETER: Long, REF_PARALLILISM: Int, sc: SparkContext): RDD[GRECORD] = {
     logger.info("----------------MAP71 executing -------------")
     //creating the datasets
     val ref: RDD[(GRecordKey, Array[GValue])] =
@@ -42,23 +43,40 @@ object GenometricMap71 {
     execute(executor, grouping, aggregator, ref, exp, binningParameter, REF_PARALLILISM, sc)
   }
 
-  case class MapKey(/*sampleId: Long, */ newId: Long, refChr: String, refStart: Long, refStop: Long, refStrand: Char, refValues: List[GValue]) {
+//  case class MapKey(/*sampleId: Long, */ newId: Long, refChr: String, refStart: Long, refStop: Long, refStrand: Char, refValues: List[GValue]) {
+//
+//    override def equals(obj: scala.Any): Boolean = {
+//      if (## == obj.##) {
+//        val that = obj.asInstanceOf[MapKey]
+//        // val result = this.productIterator.zip(that.productIterator).map(x=>x._1 equals x._2).reduce(_ && _)
+//        this.refStart == that.refStart &&
+//          this.refStop == that.refStop &&
+//          this.refStrand == that.refStrand &&
+//          //  this.sampleId == that.sampleId &&
+//          this.newId == that.newId &&
+//          this.refChr == that.refChr &&
+//          this.refValues == that.refValues
+//      }
+//      else
+//        false
+//    }
 
-    override def equals(obj: scala.Any): Boolean = {
-      if (## == obj.##) {
-        val that = obj.asInstanceOf[MapKey]
-        // val result = this.productIterator.zip(that.productIterator).map(x=>x._1 equals x._2).reduce(_ && _)
-        this.refStart == that.refStart &&
-          this.refStop == that.refStop &&
-          this.refStrand == that.refStrand &&
-          //  this.sampleId == that.sampleId &&
-          this.newId == that.newId &&
-          this.refChr == that.refChr &&
-          this.refValues == that.refValues
+    case class MapKey(/*sampleId: Long, */ newId: Long, refStart: Long, refStop: Long, refStrand: Char, refValues: List[GValue]) {
+
+      override def equals(obj: scala.Any): Boolean = {
+        if (## == obj.##) {
+          val that = obj.asInstanceOf[MapKey]
+          // val result = this.productIterator.zip(that.productIterator).map(x=>x._1 equals x._2).reduce(_ && _)
+          this.refStart == that.refStart &&
+            this.refStop == that.refStop &&
+            this.refStrand == that.refStrand &&
+            //  this.sampleId == that.sampleId &&
+            this.newId == that.newId &&
+            this.refValues == that.refValues
+        }
+        else
+          false
       }
-      else
-        false
-    }
 
     @transient override lazy val hashCode: Int = MurmurHash3.productHash(this)
   }
@@ -66,19 +84,55 @@ object GenometricMap71 {
   //possible solution is generate GRecordKey and add the others as list
 
   @throws[SelectFormatException]
-  def execute(executor: GMQLSparkExecutor, grouping: OptionalMetaJoinOperator, aggregator: List[RegionAggregate.RegionsToRegion], ref: RDD[GRECORD], exp: RDD[GRECORD], BINNING_PARAMETER: Long, REF_PARALLILISM: Int, sc: SparkContext): RDD[GRECORD] = {
+  def execute(executor: GMQLSparkDieuExecutor, grouping: OptionalMetaJoinOperator, aggregator: List[RegionAggregate.RegionsToRegion], ref: RDD[GRECORD], exp: RDD[GRECORD], BINNING_PARAMETER: Long, REF_PARALLILISM: Int, sc: SparkContext): RDD[GRECORD] = {
     val groups = executor.implement_mjd(grouping, sc).flatMap { x => x._2.map(s => (x._1, s)) }
 
     val refGroups: Broadcast[collection.Map[Long, Iterable[Long]]] = sc.broadcast(groups.groupByKey().collectAsMap())
 
 
-    implicit val orderGRECORD: Ordering[(GRecordKey, Array[GValue])] = Ordering.by { ar: GRECORD => ar._1 }
+//    implicit val orderGRECORD: Ordering[(GRecordKey, Array[GValue])] = Ordering.by { ar: GRECORD => ar._1 }
 
-    val expBinned = exp.binDS(BINNING_PARAMETER, aggregator)
+    val expBinned = exp//.binDS(BINNING_PARAMETER, aggregator)
+    .mapPartitions(items =>{
+      items.flatMap { x => {
+        val startBin = (x._1._3 / BINNING_PARAMETER).toInt
+        val stopBin = (x._1._4 / BINNING_PARAMETER).toInt
+
+        val newVal: Array[GValue] = aggregator
+          .map((f: RegionAggregate.RegionsToRegion) => {
+            x._2(f.index)
+          }).toArray
+
+        (startBin to stopBin).map(i => ((x._1._1, i), (x._1._3, x._1._4, x._1._5, newVal)))
+      }
+      }
+    }, true)
+
     val refBinnedRep = ref
-//      .repartition(sc.defaultParallelism * 32 - 1)
-      .repartition(32)
-      .binDS(BINNING_PARAMETER, refGroups)
+      .mapPartitions(items =>{
+        items.flatMap{ x =>
+          val startBin = (x._1._3 / BINNING_PARAMETER).toInt
+          val stopBin = (x._1._4 / BINNING_PARAMETER).toInt
+
+
+          refGroups.value.getOrElse(x._1._1, Iterable[Long]()).flatMap { exp_id =>
+            val newID = Hashing.md5().newHasher().putLong(x._1._1).putLong(exp_id).hash().asLong
+
+            (startBin to stopBin).map { i =>
+              ((exp_id, i), (newID, x._1._3, x._1._4, x._1._5, x._2))
+            }
+          }
+        }
+
+      }, true)
+    //      .repartition(sc.defaultParallelism * 32 - 1)
+  //   .binDS(BINNING_PARAMETER, refGroups)
+
+//    val expBinned = exp.repartitionAndSortWithinPartitions(new CustomPartitioner(23))
+//                      .binDS(BINNING_PARAMETER, aggregator)
+//    val refBinnedRep = ref.
+//      repartitionAndSortWithinPartitions(new CustomPartitioner(23))
+//      .binDS(BINNING_PARAMETER, refGroups)
 
     val emptyArrayGValue = Array.empty[GValue]
     val emptyArrayInt = Array.empty[Int]
@@ -105,7 +159,8 @@ object GenometricMap71 {
       refBinnedRep
         .cogroup(expBinned)
         .flatMap {
-          case (key: (Long, String, Int), (ref: Iterable[(Long, Long, Long, Char, Array[GValue])], exp: Iterable[(Long, Long, Char, Array[GValue])])) =>
+//          case (key: (Long, String, Int), (ref: Iterable[(Long, Long, Long, Char, Array[GValue])], exp: Iterable[(Long, Long, Char, Array[GValue])])) =>
+          case (key: (Long, Int), (ref: Iterable[(Long, Long, Long, Char, Array[GValue])], exp: Iterable[(Long, Long, Char, Array[GValue])])) =>
             // key: (Long, String, Int) sampleId, chr, bin
             // ref: Iterable[(Long, Long, Long, Char, Array[GValue])] newSampleId, start, stop, strand, others
             // exp: Iterable[(Long, Long, Char, Array[GValue])] start, stop, strand, others
@@ -113,9 +168,10 @@ object GenometricMap71 {
             ref
               .iterator
               .map { refRecord =>
-                val mapKey = MapKey(/*key._1,*/ refRecord._1, key._2, refRecord._2, refRecord._3, refRecord._4, refRecord._5.toList)
+//                val mapKey = MapKey(/*key._1,*/ refRecord._1, key._2, refRecord._2, refRecord._3, refRecord._4, refRecord._5.toList)
+                val mapKey = MapKey(/*key._1,*/ refRecord._1, refRecord._2, refRecord._3, refRecord._4, refRecord._5.toList)
 
-                val refInStartBin = (refRecord._2 / BINNING_PARAMETER).toInt.equals(key._3)
+                val refInStartBin = (refRecord._2 / BINNING_PARAMETER).toInt.equals(key._2)
                 val isRefStrandBoth = refRecord._4.equals('*')
 
                 val expFiltered = exp
@@ -126,7 +182,7 @@ object GenometricMap71 {
                       /* same strand */
                       (isRefStrandBoth || expRecord._3.equals('*') || refRecord._4.equals(expRecord._3)) &&
                       /* first comparison (start bin of either the ref or exp)*/
-                      (refInStartBin || (expRecord._1 / BINNING_PARAMETER).toInt.equals(key._3))
+                      (refInStartBin || (expRecord._1 / BINNING_PARAMETER).toInt.equals(key._2))
                   )
 
                 if (expFiltered.nonEmpty) { //if there is a match ref against exp
@@ -157,7 +213,7 @@ object GenometricMap71 {
 
       val newID = mapKey.newId //Hashing.md5().newHasher().putLong(mapKey.refId).putLong(mapKey.sampleId).hash().asLong
 
-      val gRecordKey = new GRecordKey(newID, mapKey.refChr, mapKey.refStart, mapKey.refStop, mapKey.refStrand)
+      val gRecordKey = GRecordKey(newID, "", mapKey.refStart, mapKey.refStop, mapKey.refStrand)
 
       //default size is 16
       val buffer = new ArrayBuffer[GValue]
@@ -187,6 +243,23 @@ object GenometricMap71 {
         (startBin to stopBin).map(i => ((x._1._1, x._1._2, i), (x._1._3, x._1._4, x._1._5, newVal)))
       }
 
+
+//    rdd.mapPartitions(item => item.flatMap { x =>
+//      //        if (bin > 0) {
+//      val startBin = (x._1._3 / bin).toInt
+//      val stopBin = (x._1._4 / bin).toInt
+//
+//      val newVal: Array[GValue] = aggregator
+//        .map((f: RegionAggregate.RegionsToRegion) => {
+//          x._2(f.index)
+//        }).toArray
+//
+//      (startBin to stopBin).map(i => ((x._1._1, x._1._2, i), (x._1._3, x._1._4, x._1._5, newVal)))
+//    }, true)
+
+
+
+
     def binDS(bin: Long, Bgroups: Broadcast[collection.Map[Long, Iterable[Long]]]): RDD[((Long, String, Int), (Long, Long, Long, Char, Array[GValue]))] =
       rdd.flatMap { x =>
         val startBin = (x._1._3 / bin).toInt
@@ -205,5 +278,6 @@ object GenometricMap71 {
 
 
   }
+
 
 }

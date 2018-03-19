@@ -13,6 +13,7 @@
         <module>Compiler</module>
         <module>GMQL-Test</module>
         <module>GMQL-R</module>
+        <module>GMQL-Dieutth</module>
         <module>GMQL-SciDB</module>
         <module>SciDB-ScalaAPI</module>
         <module>GMQL-Repository</module>
