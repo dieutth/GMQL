@@ -15,7 +15,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 object Test_performance {
   def main(args : Array[String]) {
 
-    val conf = new SparkConf().setAppName("Original without profiling, small ds").setMaster("local[4]")
+    val conf = new SparkConf().setAppName("Original without profiling, small ds").setMaster("local[*]")
       .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer").set("spark.kryoserializer.buffer", "64")
       .set("spark.driver.allowMultipleContexts","true")
       .set("spark.sql.tungsten.enabled", "true")
@@ -50,7 +50,7 @@ object Test_performance {
 
     //--------------------------------Test with File--------------------------------
     val dsFilePath1 = "/home/dieutth/data/gmql/uncompressed/TADs_Aiden/" // /home/dieutth/share/data/Example_Dataset_1/files"
-    val dsFilePath2 = "/home/dieutth/data/gmql/uncompressed/TADs_Aiden/" // /home/dieutth/share/data/Example_Dataset_2/files"
+    val dsFilePath2 = "/home/dieutth/data/gmql/uncompressed/GRCh38_TCGA_copy_number_masked_20171221_100212/"//"/home/dieutth/data/gmql/uncompressed/TADs_Aiden/" // /home/dieutth/share/data/Example_Dataset_2/files"
 
     val timestamp = System.currentTimeMillis()
     val ds1 = server READ(dsFilePath1 ) USING (new CustomParser().setSchema(dsFilePath1))
@@ -59,7 +59,7 @@ object Test_performance {
 
     //    server COLLECT(ds1)
     val cover = ds1.MAP(None,List(),ds2)
-    val result = server TAKE (cover, 10)
+//    val result = server TAKE (cover, 10)
     server setOutputPath("/home/dieutth/data/gmql/result2/") MATERIALIZE(cover)
     server.run()
 

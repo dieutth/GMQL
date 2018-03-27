@@ -28,7 +28,6 @@ import it.polimi.genomics.dieutth.RegionsOperators.MapWithCustomPartitioner.Cust
 import it.polimi.genomics.dieutth.RegionsOperators.SelectRegions._
 import it.polimi.genomics.dieutth.RegionsOperators._
 import it.polimi.genomics.dieutth.loaders._
-import it.polimi.genomics.spark.implementation.RegionsOperators.GenometricMap.GenometricMap71
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkContext
